@@ -1,8 +1,65 @@
 from tlscommon import *
 import secrets
+import socket
 
 class Client:
-    pass
+    def __init__(self, *, version=0x0304):
+        if version != 0x0304:
+            raise RuntimeError("Only TLS 1.3 is supported")
+        self.version = version
+        self.sock = None
+        self._isconnected = False
+        self.random = {"client": None, "server": None}
+    
+    @property
+    def isconnected(self):
+        return self._isconnected
+    
+    def check_connected(self):
+        if not self.isconnected:
+            raise RuntimeError("Client is not connected to the server yet.")
+    
+    def send(self, data:list):
+        self.check_connected()
+        return self.sock.send(bytes(data))
+    
+    def recv(self):
+        self.check_connected()
+        result = []
+        while True:
+            data = self.sock.recv(4096)
+            if len(data) == 0:
+                break
+            result.extend([*data])
+        return result
+    
+    def connect(self, address:str, port:int):
+        if self.isconnected:
+            raise RuntimeError("Already connected")
+        self.sock = socket.create_connection((address, port))
+        self._isconnected = True
+    
+    def handshake(self):
+        self.check_connected()
+
+        client_random = self.random["client"] = gen_random(32)
+
+        client_hello = TLSClientHelloFrame()
+        client_hello.random = client_random
+        client_hello.extensions.append(TLSExtension(43, [2, 3, 4]))
+
+        self.send(client_hello.get_binary())
+
+        server_hello = self.recv()
+        print(server_hello)
+
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+            self.sock.close()
+        except:
+            pass
+
+    
 
 class TLSClientHelloFrame(TLSHandshakeFrame):
     def __init__(self):

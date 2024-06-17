@@ -3,7 +3,7 @@ import secrets
 def int_to_list(intValue, length):
     result = []
     for i in range(length):
-        result.append((intValue // (0xff ** i)) % 0xff)
+        result.append((intValue // (0xff ** (length - i - 1))) % 0xff)
     return result
 
 def gen_random(length: int):
