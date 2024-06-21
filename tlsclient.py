@@ -10,6 +10,7 @@ class Client:
         self.sock = None
         self._isconnected = False
         self.random = {"client": None, "server": None}
+        self.cache = []
     
     @property
     def isconnected(self):
@@ -22,15 +23,32 @@ class Client:
     def send(self, data:list):
         self.check_connected()
         return self.sock.send(bytes(data))
-    
+
     def recv(self):
         self.check_connected()
-        result = []
-        while True:
-            data = self.sock.recv(4096)
-            if len(data) == 0:
-                break
-            result.extend([*data])
+
+        tls_type = -1
+        tls_length = -1
+        data = [*self.cache]
+        self.cache = []
+        
+        buffer_size = 5 # TLS header
+        while tls_length < 0 or len(data) < 5 + tls_length:
+            data.extend(self.sock.recv(buffer_size))
+
+            if tls_length < 0 and len(data) >= 5:
+                tls_type = data[0]
+                tls_length = data[3] * 0xff + data[4]
+                buffer_size = tls_length - len(data) + 5
+        
+        if len(data) > 5 + tls_length:
+            self.cache.extend(data[tls_length+5:])
+
+        result = TLSRecordFrame.parse(data[:tls_length+5])
+
+        print_tree(result)
+        print()
+
         return result
     
     def connect(self, address:str, port:int):
@@ -44,60 +62,30 @@ class Client:
 
         client_random = self.random["client"] = gen_random(32)
 
+        self.private_key = crypto.PrivateKey.generate(crypto.X25519)
+        self.public_key = crypto.PublicKey.from_private(self.private_key)
+
+        self.shared_key = None
+
         client_hello = TLSClientHelloFrame()
         client_hello.random = client_random
-        client_hello.extensions.append(TLSExtension(43, [2, 3, 4]))
+        client_hello.cipher_suites.append(TLSCipherSuite(0x1301))
+        client_hello.extensions.append(TLSExtension(43, [2, 3, 4])) # supported versions
+        client_hello.extensions.append(TLSExtension(13, [0, 2, 4, 3])) # signature algorithms
+        client_hello.extensions.append(TLSExtension(10, [0, 2, 0, 0x1d])) # supported groups ecdhe x25195
+        client_hello.extensions.append(TLSExtension(51, [0, 36, 0, 0x1d, 0, 32] + self.public_key.value)) # key share
 
-        self.send(client_hello.get_binary())
+        self.send(
+            TLSRecordFrame(
+                TLSHandshakeFrame(
+                    client_hello
+                )
+            ).get_binary())
 
         server_hello = self.recv()
-        print(server_hello)
 
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
             self.sock.close()
         except:
             pass
-
-    
-
-class TLSClientHelloFrame(TLSHandshakeFrame):
-    def __init__(self):
-        super().__init__()
-        self.handshake_type = 1 # Handshake
-
-        self.random = None # FIXME
-        self.cipher_suites = [] # FIXME
-        self.extensions = [] # FIXME
-        pass
-    
-    @classmethod
-    def parse(cls, data:list):
-        pass
-
-    def get_binary(self):
-        if not isinstance(self.random, (list, tuple)) or len(self.random) != 32:
-            raise RuntimeError("ClientHello random is not set or a wrong value")
-        
-        result = []
-
-        # Protocol Version
-        result.extend([3, 3]) # 0x0303
-
-        # random
-        result.extend(self.random)
-
-        # legacy session id ( ignore )
-        result.extend([1, 0])
-
-        # cipher suites
-        result.extend(int_to_list(len(self.cipher_suites) * 2, 2))
-        for cipher_suite in self.cipher_suites:
-            result.extend(cipher_suite)
-
-        # legacy compression methods
-        result.extend([1, 0])
-
-        result.extend(self.get_extensions_binary())
-
-        return self.set_handshake_header(result)
