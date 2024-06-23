@@ -21,7 +21,7 @@ class BaseKey:
         else:
             return "Unknown"
 
-    def __repr__(self):
+    def __str__(self):
         if isinstance(self.value, (list, tuple)):
             return "<{} type={} length={} value=0x{}>".format(
                 self.__class__.__name__,
