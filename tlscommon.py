@@ -176,7 +176,7 @@ class TLSAlertFrame(TLSChildFrame):
             120: "no_application_protocol"
         }
 
-    def __repr__(self):
+    def __str__(self):
         if self.level in self.levels:
             level_str = self.levels[self.level]
         else:
