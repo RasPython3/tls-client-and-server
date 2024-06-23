@@ -1,4 +1,5 @@
-from tlsclient import *
+from tls.common import *
+from tls.client import Client
 
 def main():
     client = Client()

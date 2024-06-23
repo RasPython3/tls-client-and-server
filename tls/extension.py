@@ -1,4 +1,4 @@
-from tlsutils import *
+from .utils import *
 
 class TLSExtension(object):
     extension_types = {
@@ -76,6 +76,7 @@ class TLSSupportedVersionsExtension(TLSExtension):
 
     @data.setter
     def data(self, value):
+        pass
 
 class NamedGroup(object):
     named_group_types = {

@@ -1,8 +1,8 @@
 import secrets
-import crypto
+from . import crypto
 
-from tlsutils import *
-from tlsextension import *
+from .utils import *
+from .extension import *
 
 
 class NetworkFrame(object):

@@ -1,4 +1,4 @@
-from tlscommon import *
+from .common import *
 import secrets
 import socket
 
