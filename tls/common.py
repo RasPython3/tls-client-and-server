@@ -108,7 +108,7 @@ class NetworkFrame(object):
 
 class BaseTLSFrame(NetworkFrame):
     def __init__(self):
-        pass
+        super().__init__()
 
     def set_tls_header(self, data:list):
         result = [self.tls_record_type, 3, 1] + int_to_list(len(data), 2) + data
@@ -121,3 +121,5 @@ class BaseTLSFrame(NetworkFrame):
             extension_binaries.extend(extension.get_binary())
 
         return int_to_list(len(extension_binaries), 2) + extension_binaries
+
+  

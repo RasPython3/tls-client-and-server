@@ -199,10 +199,13 @@ class SignatureSchemeList(list):
 
 
 class KeyShareEntry(object):
-    def __init__(self, group:NamedGroup, key:list):
+    def __init__(self, group:NamedGroup, key:crypto.BaseKey):
         super().__init__()
         self.group = group
-        self.key = key
+        if isinstance(key, (list, tuple)):
+            self.key = crypto.BaseKey(key, -1)
+        else:
+            self.key = key
 
     def get_binary(self):
         if self.group.group_id == 0x001d: # X25519
