@@ -6,6 +6,7 @@ from .server import *
 
 from .base import *
 
+
 class TLSServerHelloFrame(TLSHandshakeFrame):
     def __init__(self):
         super().__init__()
@@ -61,7 +62,7 @@ class TLSServerHelloFrame(TLSHandshakeFrame):
 
     def get_binary(self):
         if not isinstance(self.random, (list, tuple)) or len(self.random) != 32:
-            raise RuntimeError("ClientHello random is not set or a wrong value")
+            raise RuntimeError("ServerHello random is not set or a wrong value")
         
         result = []
 
@@ -74,17 +75,15 @@ class TLSServerHelloFrame(TLSHandshakeFrame):
         # legacy session id ( ignore )
         result.extend([0])
 
-        # cipher suites
-        result.extend(int_to_list(len(self.cipher_suites) * 2, 2))
-        for cipher_suite in self.cipher_suites:
-            result.extend(int_to_list(cipher_suite.type_id, 2))
+        # cipher suite
+        result.extend(int_to_list(self.cipher_suite.type_id, 2))
 
         # legacy compression methods
         result.extend([1, 0])
 
         result.extend(self.get_extensions_binary())
 
-        return self.set_handshake_header(result)
+        return result
 
 class TLSHelloRetryRequestFrame(TLSHandshakeFrame):
     def __init__(self):
@@ -141,7 +140,7 @@ class TLSHelloRetryRequestFrame(TLSHandshakeFrame):
 
     def get_binary(self):
         if not isinstance(self.random, (list, tuple)) or len(self.random) != 32:
-            raise RuntimeError("ClientHello random is not set or a wrong value")
+            raise RuntimeError("ServerHello random is not set or a wrong value")
         
         result = []
 
@@ -154,14 +153,12 @@ class TLSHelloRetryRequestFrame(TLSHandshakeFrame):
         # legacy session id ( ignore )
         result.extend([0])
 
-        # cipher suites
-        result.extend(int_to_list(len(self.cipher_suites) * 2, 2))
-        for cipher_suite in self.cipher_suites:
-            result.extend(int_to_list(cipher_suite.type_id, 2))
+        # cipher suite
+        result.extend(int_to_list(self.cipher_suite.type_id, 2))
 
         # legacy compression methods
         result.extend([1, 0])
 
         result.extend(self.get_extensions_binary())
 
-        return self.set_handshake_header(result)
+        return result

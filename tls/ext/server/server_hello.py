@@ -11,7 +11,7 @@ class TLSSupportedVersionsExtension(core.TLSExtension):
 
     @property
     def data(self):
-        return int_to_list(version.value, 2)
+        return int_to_list(self.version.value, 2)
 
     @data.setter
     def data(self, value):
