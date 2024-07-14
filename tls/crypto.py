@@ -1,7 +1,11 @@
 from cryptography.hazmat.primitives.kdf import hkdf
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, hmac
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
+from .utils import int_to_list
 
 X25519 = 0x001D
 
@@ -95,9 +99,20 @@ class HashAlgorithm(object):
         else:
             return 0
 
-    def hash(self, value:bytes):
+    def hmac(self, key:bytes, value:bytes, encoding="ascii"):
         if type(value) == str:
-            value = value.encode("utf-8")
+            value = value.encode(encoding)
+        elif isinstance(value, (list, tuple)):
+            value = bytes(value)
+        elif type(value) != bytes:
+            TypeError(type(value).__name__)
+        hmacer = hmac.HMAC(key, self.algorithm)
+        hmacer.update(value)
+        return hmacer.finalize()
+
+    def hash(self, value:bytes, encoding="ascii"):
+        if type(value) == str:
+            value = value.encode(encoding)
         elif isinstance(value, (list, tuple)):
             value = bytes(value)
         elif type(value) != bytes:
@@ -108,20 +123,23 @@ class HashAlgorithm(object):
 
 class HKDFLabel(object):
     def __init__(self, label:str, context:str, length:int):
-        self.label = label
+        if type(label) == str:
+            self.label = label.encode("ascii")
+        else:
+            self.label = label
         self.context = context
         self.length = length
 
-    def get_binary(self):
-        return int_to_list(self.length, 2) + [len(label)+6] + [*("tls13 "+label).encode("ascii")] + [len(context)] + [*context.encode("ascii")]
+    def get_bytes(self):
+        return bytes(int_to_list(self.length, 2) + [len(self.label)+6] + [*(b"tls13 "+self.label)] + [len(self.context)] + [*self.context])
 
 def HKDFExpand(secret, hkdf_label, length, hasher):
     if not isinstance(hkdf_label, HKDFLabel):
         raise TypeError("hkdf_label must be HKDFLabel")
-    hkdf_exp = hkdf.HKDFExpnd(
+    hkdf_exp = hkdf.HKDFExpand(
         algorithm = hasher.algorithm,
         length = length,
-        info = hkdf_label.get_binary()
+        info = hkdf_label.get_bytes()
     )
     key = hkdf_exp.derive(secret)
     return key
@@ -130,12 +148,17 @@ def HKDFExpandLabel(secret, label, context, length, hasher):
     return HKDFExpand(secret, HKDFLabel(label, context, length), length, hasher)
 
 def HKDFExtract(salt, ikm, hasher):
-    hkdf_ext = hkdf.HKDF(
-        algorithm = hasher.algorithm,
-        length = hasher.length,
-        salt = salt
-    )
-    key = hkdf_ext.derive(ikm)
+    #hkdf_ext = hkdf.HKDF(
+    #    algorithm = hasher.algorithm,
+    #    length = hasher.length,
+    #    salt = salt,
+    #    info=None
+    #)
+    #key = hkdf_ext.derive(ikm)
+    if salt == None or len(salt) == 0:
+        salt = b"\0" * hasher.length
+    # salt -> key, ikm -> value
+    key = hasher.hmac(salt, ikm)
     return key
 
 '''

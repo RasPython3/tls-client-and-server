@@ -43,8 +43,8 @@ class Client:
         self.private_key = {"client": None, "server": None}
         self.public_key = {"client": None, "server": None}
         self.shared_key = None
-        self.handshake_key = None
-        self.handshake_iv = None
+        self.handshake_key = {"client": None, "server": None}
+        self.handshake_iv = {"client": None, "server": None}
         self.application_key = None
         self.application_iv = None
         self.recv_cache = []
@@ -54,6 +54,7 @@ class Client:
         self.cipher_suite = None
 
         self.phase = 0
+        self.record_num = 0
         # -1 ... FATAL (closed by server)
         # 0 ... SOCK NOT CONNECTED / CLOSED
         # 1 ... START
@@ -103,6 +104,9 @@ class Client:
 
             result = TLSRecordFrame.parse(data[:tls_length+5])
 
+            if result.child_id == 23: # Application Data, encrypted
+                self.decrypt_message(result, self.handshake_key["server"], self.handshake_iv["server"])
+
             if result.child_id == 22: #Handshake Frame
                 if result.child.child_id == 0x01: # Client Hello
                     result.child.child = TLSClientHelloFrame.parse(result.child.child.data)
@@ -140,7 +144,7 @@ class Client:
             self.close()
             raise RuntimeError("The server returned fatal alert: " + self.received_alert.get_description_text())
 
-    def transcript_hash(self, msgs):
+    def transcript_hash(self, msgs, hasher) -> bytes:
         data = []
         if len(msgs) >= 2 and \
             isinstance(msgs[0], TLSRecordFrame) and \
@@ -161,7 +165,42 @@ class Client:
             data.extend(msgs[1:])
         else:
             data.extend(msgs)
-        return transcriptHash(data)
+        return transcriptHash([i.child for i in data], hasher)
+
+    def generate_handshake_secrets(self):
+        hasher = self.cipher_suite.hash_algorithm
+        early_secret = crypto.HKDFExtract(None, b"\0"*hasher.length, hasher)
+        shared_secret = bytes(self.shared_key.value)
+        empty_hash = hasher.hash("")
+        hello_hash = self.transcript_hash(self.all_cache, hasher)
+        derived_secret = crypto.HKDFExpandLabel(early_secret, "derived", empty_hash, hasher.length, hasher)
+        handshake_secret = crypto.HKDFExtract(derived_secret, shared_secret, hasher)
+
+        client_secret = crypto.HKDFExpandLabel(handshake_secret, "c hs traffic", hello_hash, hasher.length, hasher)
+        server_secret = crypto.HKDFExpandLabel(handshake_secret, "s hs traffic", hello_hash, hasher.length, hasher)
+
+        self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
+        self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
+        self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+        self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+
+    def decrypt_message(self, record: TLSRecordFrame, key:list, iv:list):
+        key = key
+        iv = iv
+
+        recnum = int_to_list(self.record_num, 8) + [0] * (len(iv) - 8)
+        nonce = [iv[i] ^ recnum[i] for i in range(len(iv))]
+
+        if self.cipher_suite.type_id in (0x1301, 0x1302):
+            decrypter = crypto.AESGCM(bytes(key))
+        else:
+            raise RuntimeError("Unsupported")
+
+        additional_data = record.get_binary()[:5]
+
+        decrypted_data = decrypter.decrypt(bytes(nonce), bytes(record.child.encrypted_data[:-16]), bytes(additional_data))
+
+        record.raw_data = [*decrypted_data]
 
     def connect(self, address:str, port:int):
         if self.phase != 0:
@@ -201,7 +240,7 @@ class Client:
 
         client_hello = TLSClientHelloFrame()
         client_hello.random = client_random
-        client_hello.cipher_suites.append(TLSCipherSuite(0x1301))
+        client_hello.cipher_suites.append(TLSCipherSuite(0x1302)) # TLS_AES_256_GCM_SHA384
         client_hello.extensions.append(
             ext.client.client_hello.TLSSupportedVersionsExtension([TLSVersion("1.3")])
         ) # supported versions
@@ -251,6 +290,8 @@ class Client:
         if server_hello.cipher_suite.type_id not in [cipher_suite.type_id for cipher_suite in client_hello.cipher_suites]:
             raise RuntimeError("Illegal CipherSuite!")
 
+        self.cipher_suite = server_hello.cipher_suite
+
         for extension in server_hello.extensions:
             if extension.type_id == 51:
                 if extension.entry.group.group_id == 0x001d: # X25519, must always True
@@ -259,6 +300,8 @@ class Client:
 
         if self.shared_key == None:
             raise RuntimeError("Could not get shared key")
+
+        self.generate_handshake_secrets()
 
         encrypted_extensions = None
         recv_change_cipher_spec = False # for compatibility

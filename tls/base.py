@@ -4,10 +4,10 @@ from . import crypto
 
 # crypto func
 
-def transcripHash(messages, hasher:crypto.HashAlgorithm):
+def transcriptHash(messages, hasher:crypto.HashAlgorithm):
     result = []
     for msg in messages:
-        if isinstance(msg, NetworkFrame):
+        if isinstance(msg, BaseTLSFrame):
             result.extend(msg.get_binary())
         elif type(msg) == str:
             result.extend(msg.encode("utf-8"))
@@ -52,8 +52,7 @@ class TLSCipherSuite(object):
 
         type_id = data[0] * 0x100 + data[1]
 
-        result = cls()
-        result.type_id = type_id
+        result = cls(type_id)
 
         return result
     
