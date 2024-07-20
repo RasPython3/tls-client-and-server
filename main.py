@@ -1,16 +1,22 @@
-from tls.common import *
-from tls.client import Client
+from tls.application import Application, ApplicationType
 
-def main():
-    client = Client()
-    client.connect("127.0.0.1", 50000)
-    client.handshake()
-    return
-    for i in range(len(client_hello_binary)):
-        if i % 16 == 15 or i+1 == len(client_hello_binary):
-            print("{:0>2x}".format(client_hello_binary[i]))
-        else:
-            print("{:0>2x}".format(client_hello_binary[i]), end=" ")
+class Pinger(Application):
+    def __init__(self):
+        super().__init__(ApplicationType.CLIENT)
+
+    def main(self):
+        self.send("ping")
+
+        print(self.recv())
+
+class HttpClient(Application):
+    def __init__(self):
+        super().__init__(ApplicationType.CLIENT)
+
+    def main(self):
+        self.send("GET /index.html HTTP/1.1\r\nHost: 127.0.0.1:50000\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
+        self.recv()
 
 if __name__ == "__main__":
-    main()
+    app = HttpClient()
+    app.run("127.0.0.1", 50000)

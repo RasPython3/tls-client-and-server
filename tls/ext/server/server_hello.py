@@ -1,6 +1,6 @@
 from .. import core
 from ...utils import int_to_list
-from ...common import TLSVersion
+from ...common import TLSVersion, KeyShareEntry
 
 class TLSSupportedVersionsExtension(core.TLSExtension):
     def __init__(self, version:TLSVersion):
@@ -25,9 +25,9 @@ class TLSSupportedVersionsExtension(core.TLSExtension):
         return cls(TLSVersion(data[0] * 0x100 + data[1]))
 
 class TLSKeyShareExtension(core.TLSExtension):
-    def __init__(self, entry:core.KeyShareEntry):
+    def __init__(self, entry:KeyShareEntry):
         super().__init__(51)
-        if not isinstance(entry, core.KeyShareEntry):
+        if not isinstance(entry, KeyShareEntry):
             raise TypeError("given entry is not KeyShareEntry")
         self.entry = entry
 
@@ -42,5 +42,5 @@ class TLSKeyShareExtension(core.TLSExtension):
 
     @classmethod
     def parse(cls, data: list):
-        entry = core.KeyShareEntry.parse(data)
+        entry = KeyShareEntry.parse(data)
         return cls(entry)

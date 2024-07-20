@@ -90,9 +90,163 @@ class TLSVersion:
         elif value & 0xff00 == 0x0300:
             # TLS
             self.major_version = 1
-            self.minor_version = value & 0xff - 1
+            self.minor_version = (value & 0xff) - 1
         else:
             raise RuntimeError("Illegal TLS version")
+
+class NamedGroup(object):
+    named_group_list = {
+        # Elliptic Curve Groups (ECDHE)
+        0x0017: "secp256r1",
+        0x0018: "secp384r1",
+        0x0019: "secp521r1",
+        0x001D: "x25519",
+        0x001E: "x448",
+
+        # Finite Field Groups (DHE)
+        0x0100: "ffdhe2048",
+        0x0101: "ffdhe3072",
+        0x0102: "ffdhe4096",
+        0x0103: "ffdhe6144",
+        0x0104: "ffdhe8192",
+
+        # Reserved Code Points
+        # ffdhe_private_use(0x01FC..0x01FF),
+        # ecdhe_private_use(0xFE00..0xFEFF)
+    }
+    def __init__(self, group_id:int=0):
+        self.group_id = group_id # null
+    
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) != 2:
+            raise ValueError("Illegal size data")
+
+        group_id = data[0] * 0x100 + data[1]
+
+        result = cls(group_id)
+
+        return result
+
+    @property
+    def value(self):
+        # un-neccessary?
+        return self.group_id
+
+    def get_binary(self):
+        return int_to_list(self.group_id, 2)
+
+class SignatureScheme(object):
+    signature_algorithm_list = {
+        # RSASSA-PKCS1-v1_5 algorithms
+        0x0401: "rsa_pkcs1_sha256",
+        0x0501: "rsa_pkcs1_sha384",
+        0x0601: "rsa_pkcs1_sha512",
+
+        # ECDSA algorithms
+        0x0403: "ecdsa_secp256r1_sha256",
+        0x0503: "ecdsa_secp384r1_sha384",
+        0x0603: "ecdsa_secp521r1_sha512",
+
+        # RSASSA-PSS algorithms with public key OID rsaEncryption
+        0x0804: "rsa_pss_rsae_sha256",
+        0x0805: "rsa_pss_rsae_sha384",
+        0x0806: "rsa_pss_rsae_sha512",
+
+        # EdDSA algorithms
+        0x0807: "ed25519",
+        0x0808: "ed448",
+
+        # RSASSA-PSS algorithms with public key OID RSASSA-PSS
+        0x0809: "rsa_pss_pss_sha256",
+        0x080a: "rsa_pss_pss_sha384",
+        0x080b: "rsa_pss_pss_sha512",
+
+        # Legacy algorithms
+        0x0201: "rsa_pkcs1_sha1",
+        0x0203: "ecdsa_sha1",
+    }
+    def __init__(self, sig_id:int):
+        self.sig_id = sig_id
+        self.signature_algorithm = crypto.SignatureAlgorithm(sig_id)
+    
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) != 2:
+            raise ValueError("Illegal size data")
+
+        sig_id = data[0] * 0x100 + data[1]
+
+        result = cls(sig_id)
+
+        return result
+
+    @property
+    def value(self):
+        # un-neccessary?
+        return self.sig_id
+
+    def get_binary(self):
+        return int_to_list(self.sig_id, 2)
+
+class SignatureSchemeList(list):
+    def __init__(self, *schemes):
+        super().__init__(schemes)
+
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) < 2 or len(data) - 2 != data[1] * 0x100 + data[0]:
+            raise RuntimeError("Illegal length")
+        schemes = []
+        for i in range(2, len(data), 2):
+            schemes.append(SignatureScheme.parse(data[i:i+2]))
+        result = cls(*schemes)
+        return result
+
+    def get_binary(self):
+        result = int_to_list(len(self)*2, 2)
+        for scheme in self:
+            result.extend(scheme.get_binary())
+        return result
+
+
+class KeyShareEntry(object):
+    def __init__(self, group:NamedGroup, key:crypto.BaseKey):
+        super().__init__()
+        self.group = group
+        if isinstance(key, (list, tuple)):
+            self.key = crypto.BaseKey(key, -1)
+        else:
+            self.key = key
+
+    def get_binary(self):
+        if self.group.group_id == 0x001d: # X25519
+            key_exchange_field = self.key
+        else:
+            raise RuntimeError("unsupported named group. Only X25519 is supported.")
+        if isinstance(key_exchange_field, crypto.BaseKey):
+            key_exchange_field = key_exchange_field.value
+        return self.group.get_binary() + int_to_list(len(key_exchange_field), 2) + key_exchange_field
+
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) < 4 or len(data) - 4 != data[2] * 0x100 + data[3]:
+            raise RuntimeError("Illegal length")
+        result = cls(NamedGroup.parse(data[:2]), data[4:])
+        return result
+
+class CertificateEntry(object):
+    def __init__(self, certificate, extensions):
+        self.certificate = certificate
+        self.extensions = extensions
+
+    def get_binary(self):
+        cert_data_binary = [*self.certificate.public_bytes(crypto.Encoding.DER)]
+        extension_binaries = []
+        for extension in self.extensions:
+            extension_binaries.extend(extension.get_binary())
+
+        return int_to_list(len(cert_data_binary), 3) + cert_data_binary + int_to_list(len(extension_binaries), 2) + extension_binaries
 
 class NetworkFrame(object):
     def __init__(self):
@@ -122,4 +276,34 @@ class BaseTLSFrame(NetworkFrame):
 
         return int_to_list(len(extension_binaries), 2) + extension_binaries
 
-  
+class ObjDict(dict):
+    # object-like dict
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for key in self.keys():
+            self._check(key)
+        for key in self.__class__.__dict__:
+            if not key.startswith("__") and not key.endswith("__") and key != "_check":
+                self[key] = getattr(self.__class__, key)
+    #
+    def _check(self, name):
+        if type(name) != str:
+            raise RuntimeError("Key must be str")
+        if len(name) == 0:
+            raise RuntimeError("Zero length key")
+        if name[0].lower() not in "abcdefghijklmnopqrstuvwxyz_":
+            raise RuntimeError("Keys of ObjDict must start with a-z, A-Z or _")
+        if name in self.__dir__():
+            if name not in self.__class__.__dict__ or name.startswith("__") or name.endswith("__") or name == "_check":
+                raise RuntimeError("Reserved key: "+name)
+    #
+    def __getattr__(self, name):
+        return self[name]
+    #
+    def __setattr__(self, name, value):
+        self._check(name)
+        self[name] = value
+    #
+    def __setitem__(self, name, value):
+        self._check(name)
+        return super().__setitem__(name, value)

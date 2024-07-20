@@ -4,13 +4,14 @@ from . import crypto
 
 # crypto func
 
-def transcriptHash(messages, hasher:crypto.HashAlgorithm):
+def transcript_hash(messages, hasher:crypto.HashAlgorithm):
     result = []
     for msg in messages:
+        #print(msg.child)
         if isinstance(msg, BaseTLSFrame):
             result.extend(msg.get_binary())
         elif type(msg) == str:
-            result.extend(msg.encode("utf-8"))
+            result.extend(msg.encode("ascii"))
         elif type(msg) == bytes:
             result.extend(msg)
         elif type(msg) == int:
@@ -22,6 +23,7 @@ def transcriptHash(messages, hasher:crypto.HashAlgorithm):
                 raise TypeError("list/tuple elements must be int")
         else:
             raise TypeError("Unusable type " + str(type(msg)))
+    #print(result)
     return hasher.hash(bytes(result))
 
 def deriveSecret(secret, label, messages, hasher):
@@ -67,6 +69,9 @@ class TLSChildFrame(BaseTLSFrame):
         self.type_id = None
         self.data = data
 
+    def get_binary(self):
+        return self.data
+
 class TLSParentFrame(TLSChildFrame):
     def __init__(self, child=None, child_id=None):
         super().__init__()
@@ -83,7 +88,7 @@ class TLSUnknownFrame(TLSChildFrame):
 class TLSInnerPlaintext(BaseTLSFrame):
     def __init__(self, content_type: int, content:list, padding: int):
         super().__init__()
-        self.content_type = type_id
+        self.content_type = content_type
         self.content = content
         self.padding = padding
 
@@ -94,12 +99,12 @@ class TLSInnerPlaintext(BaseTLSFrame):
             length -= 1
         if length < 2:
             raise RuntimeError("Illegal length")
-        content_type = data[length-2] * 0x100 + data[length-1]
-        content = data[:length-2]
+        content_type = data[length-1]
+        content = data[:length-1]
         return cls(content_type, content, padded_length - length)
 
     def get_binary(self):
-        return self.content + int_to_list(self.content_type, 2) + [0] * self.padding
+        return self.content + [self.content_type] + [0] * self.padding
 
 class TLSCiphertext(TLSChildFrame):
     def __init__(self, raw_data: TLSInnerPlaintext=None, encrypted_data=None):
@@ -142,7 +147,7 @@ class TLSRecordFrame(TLSParentFrame):
         elif data[0] == 22:
             child_cls = TLSHandshakeFrame
         elif data[0] == 23:
-            child_cls = TLSApplicationDataFrame
+            child_cls = TLSCiphertext
         elif data[0] == 24:
             child_cls = TLSHeartbeatFrame
         else:
@@ -311,8 +316,18 @@ class TLSHandshakeFrame(TLSParentFrame):
         result = [self.handshake_type] + int_to_list(len(data), 3) + data
         return self.set_tls_header(result)
 
-class TLSApplicationDataFrame(TLSCiphertext):
-    pass
+class TLSApplicationDataFrame(TLSChildFrame):
+    def __init__(self, data):
+        super().__init__()
+        self.type_id = 23
+        self.data = data
+
+    @classmethod
+    def parse(cls, data):
+        return cls(data)
+
+    def get_binary(self):
+        return self.data
 
 class TLSHeartbeatFrame(TLSChildFrame):
     def __init__(self):
@@ -321,6 +336,20 @@ class TLSHeartbeatFrame(TLSChildFrame):
 
     pass
 
+
+
+class TLSFinishedFrame(TLSHandshakeFrame):
+    def __init__(self, data):
+        super().__init__()
+        self.type_id = 0x14
+        self.verify_data = data
+
+    @classmethod
+    def parse(cls, data: list):
+        return cls(data)
+
+    def get_binary(self):
+        return self.verify_data
 
 class TLSMessageHashFrame(TLSChildFrame):
     def __init__(self, client_hello, hash_algorithm):

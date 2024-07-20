@@ -1,7 +1,16 @@
+import certifi
+from datetime import datetime
+
 from cryptography.hazmat.primitives.kdf import hkdf
 from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from cryptography.x509 import DNSName, load_der_x509_certificate, load_pem_x509_certificates
+from cryptography.x509.verification import PolicyBuilder, Store
+
+from cryptography.hazmat.primitives.serialization import Encoding
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
@@ -121,6 +130,16 @@ class HashAlgorithm(object):
         hasher.update(value)
         return hasher.finalize()
 
+class SignatureAlgorithm(object):
+    def __init__(self, type_id):
+        self.type_id = type_id
+        if type_id == 0x0403:
+            self.algorithm = ec.ECDSA(hashes.SHA256())
+        elif type_id == 0x0404:
+            self.algorithm = ec.ECDSA(hashes.SHA384())
+        else:
+            self.algorithm = None
+
 class HKDFLabel(object):
     def __init__(self, label:str, context:str, length:int):
         if type(label) == str:
@@ -160,6 +179,21 @@ def HKDFExtract(salt, ikm, hasher):
     # salt -> key, ikm -> value
     key = hasher.hmac(salt, ikm)
     return key
+
+def verify_certificates(leaf, certs: list = []):
+    return True # Trust All!
+
+    with open(certifi.where(), "rb") as pems:
+        store = Store(load_pem_x509_certificates(pems.read()))
+    builder = PolicyBuilder().store(store)
+    builder = builder.time(datetime.now())
+    verifier = builder.build_server_verifier(DNSName("raspython3.org"))
+    # NOTE: peer and untrusted_intermediates are Certificate and
+    #       list[Certificate] respectively, and should be loaded from the
+    #       application context that needs them verified, such as a
+    #       TLS socket.
+    chain = verifier.verify(leaf, certs)
+    return True
 
 '''
 *_write_key = HKDF-Expand-Label(Secret, "key", "", key_length)

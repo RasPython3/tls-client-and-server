@@ -1,6 +1,6 @@
 from .. import core
 from ...utils import int_to_list
-from ...common import TLSVersion
+from ...common import TLSVersion, KeyShareEntry, SignatureSchemeList, NamedGroup
 
 
 class TLSSupportedVersionsExtension(core.TLSExtension):
@@ -25,7 +25,7 @@ class TLSSupportedVersionsExtension(core.TLSExtension):
 class TLSSupportedGroupsExtension(core.TLSExtension):
     def __init__(self, groups:list=[]):
         super().__init__(10)
-        if any([not isinstance(group, core.NamedGroup) for group in groups]):
+        if any([not isinstance(group, NamedGroup) for group in groups]):
             raise TypeError('Invalid NamedGroup')
         self.groups = groups
 
@@ -45,10 +45,10 @@ class TLSSignatureAlgorithmsExtension(core.TLSExtension):
     def __init__(self, schemes:list):
         super().__init__(13)
         if isinstance(schemes, (list, tuple)):
-            if isinstance(schemes, core.SignatureSchemeList):
+            if isinstance(schemes, SignatureSchemeList):
                 self.schemes = schemes
             else:
-                self.schemes = core.SignatureSchemeList(*schemes)
+                self.schemes = SignatureSchemeList(*schemes)
         else:
             raise TypeError("schemes is not an instance of list, tuple or SignatureSchemeList")
     
@@ -66,7 +66,7 @@ class TLSSignatureAlgorithmsExtension(core.TLSExtension):
 class TLSKeyShareExtension(core.TLSExtension):
     def __init__(self, entries:list):
         super().__init__(51)
-        if any([not isinstance(entry, core.KeyShareEntry) for entry in entries]):
+        if any([not isinstance(entry, KeyShareEntry) for entry in entries]):
             raise TypeError("some of given entries are not KeyShareEntry")
         self.entries = entries
 
@@ -94,6 +94,6 @@ class TLSKeyShareExtension(core.TLSExtension):
             length = data[index+2] * 0x100 + data[index+3]
             if index+4+length > data_length:
                 raise RuntimeError("Illegal length")
-            entries.append(core.KeyShareEntry.parse(data[index:index+length+4]))
+            entries.append(KeyShareEntry.parse(data[index:index+length+4]))
             index += length + 4
         return cls(entries)
