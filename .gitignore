@@ -2,3 +2,12 @@
 *.pyc
 temp/cert.pem
 temp/key.pem
+CA/.capass
+server.cnf
+msg.hex
+decrypt
+gen-ca.sh
+CA/careq.crt
+CA/careq.pem
+CA/private/cakey.pem
+tls/decrypt.c

@@ -136,6 +136,37 @@ class NamedGroup(object):
     def get_binary(self):
         return int_to_list(self.group_id, 2)
 
+class CipherSuite(object):
+    cipher_suite_types = {
+        0x1301: "TLS_AES_128_GCM_SHA256",
+        0x1302: "TLS_AES_256_GCM_SHA384",
+        0x1303: "TLS_CHACHA20_POLY1305_SHA256",
+        0x1304: "TLS_AES_128_CCM_SHA256",
+        0x1305: "TLS_AES_128_CCM_8_SHA256",
+    }
+    def __init__(self, type_id:int=0):
+        self.type_id = type_id # null
+        if type_id in (0x1301, 0x1303, 0x1304, 0x1305):
+            self.hash_algorithm = crypto.HashAlgorithm(crypto.HashAlgorithm.SHA256)
+        elif type_id in (0x1302,):
+            self.hash_algorithm = crypto.HashAlgorithm(crypto.HashAlgorithm.SHA384)
+        else:
+            self.hash_algorithm = None
+    
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) != 2:
+            raise ValueError("Wrong size data")
+
+        type_id = data[0] * 0x100 + data[1]
+
+        result = cls(type_id)
+
+        return result
+    
+    def get_binary(self):
+        return int_to_list(self.type_id, 2)
+
 class SignatureScheme(object):
     signature_algorithm_list = {
         # RSASSA-PKCS1-v1_5 algorithms

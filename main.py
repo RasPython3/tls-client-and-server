@@ -14,8 +14,8 @@ class HttpClient(Application):
         super().__init__(ApplicationType.CLIENT)
 
     def main(self):
-        self.send("GET /index.html HTTP/1.1\r\nHost: 127.0.0.1:50000\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
-        self.recv()
+        self.send("GET /index.html HTTP/1.1\r\nHost: github.com\r\nAccept: */*\r\nConnection: keep-alive\r\n\r\n")
+        print(bytes(self.recv()).decode("utf-8"))
 
 if __name__ == "__main__":
     app = HttpClient()

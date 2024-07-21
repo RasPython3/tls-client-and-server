@@ -1,9 +1,12 @@
-from .common import *
-from .base import *
+from .common import TLSVersion, NetworkFrame, CipherSuite, SignatureScheme, NamedGroup, KeyShareEntry
+
+from .base import TLSParentFrame, TLSRecordFrame, TLSInnerPlaintext, TLSCiphertext, TLSHandshakeFrame, TLSApplicationDataFrame, TLSAlertFrame, transcript_hash
+
+from .frames import TLSClientHelloFrame, TLSServerHelloFrame, TLSHelloRetryRequestFrame, TLSEncryptedExtensionsFrame, TLSCertificateFrame, TLSCertificateVerifyFrame, TLSFinishedFrame
 
 from . import ext, crypto
 
-from .server import *
+from .utils import gen_random, int_to_list
 
 import secrets
 import socket
@@ -137,9 +140,10 @@ class Client:
                 #print(plaintext.content)
                 result = TLSRecordFrame.parse(
                     [plaintext.content_type] + \
-                    int_to_list(result.tls_version, 2) + \
+                    int_to_list(result.tls_version.value, 2) + \
                     int_to_list(len(plaintext.content), 2) + \
-                    plaintext.content
+                    plaintext.content,
+                    possibly_encrypted=False
                 )
 
             if result.child_id == 22: #Handshake Frame
@@ -158,8 +162,6 @@ class Client:
                 elif result.child.child_id == 0x14: # Finished
                     result.child.child = TLSFinishedFrame.parse(result.child.child.data)
                 self.all_cache.append(result)
-            elif result.child_id == 23: # Application Data
-                result.child = TLSApplicationDataFrame.parse(result.child.encrypted_data)
 
             self.received_frames.append(result)
 
@@ -344,10 +346,9 @@ class Client:
             TLSCiphertext(
                 TLSInnerPlaintext.parse(raw_data[5:] + [record.child_id]),
                 [*encrypted_data]
-            )
+            ),
+            version=TLSVersion("1.2")
         )
-
-        result.tls_version = 0x0303
 
         #self.decrypt_message(result, key, iv)
 
@@ -367,7 +368,7 @@ class Client:
 
         signature_source = b"\x20" * 64 + b"TLS 1.3, server CertificateVerify" + b"\0" + content
 
-        public_key.verify(signature, signature_source, self.signature_scheme.signature_algorithm.algorithm)
+        self.signature_scheme.signature_algorithm.verify(public_key, signature, signature_source)
 
     def check_server_finished(self, finished):
         hasher = self.cipher_suite.hash_algorithm
@@ -449,18 +450,18 @@ class Client:
 
         client_hello = TLSClientHelloFrame()
         client_hello.random = client_random
-        client_hello.cipher_suites.append(TLSCipherSuite(0x1302)) # TLS_AES_256_GCM_SHA384
+        client_hello.cipher_suites.append(CipherSuite(0x1302)) # TLS_AES_256_GCM_SHA384
         client_hello.extensions.append(
-            ext.client.client_hello.TLSSupportedVersionsExtension([TLSVersion("1.3")])
+            ext.ClientHelloExtensions.SupportedVersions([TLSVersion("1.3")])
         ) # supported versions
         client_hello.extensions.append(
-            ext.client.client_hello.TLSSignatureAlgorithmsExtension([SignatureScheme(0x0403)])
+            ext.ClientHelloExtensions.SignatureAlgorithms([SignatureScheme(0x0403)])
         ) # signature algorithms
         client_hello.extensions.append(
-            ext.client.client_hello.TLSSupportedGroupsExtension([NamedGroup(0x001d)])
+            ext.ClientHelloExtensions.SupportedGroups([NamedGroup(0x001d)])
         ) # supported groups ecdhe x25195
         client_hello.extensions.append(
-            ext.client.client_hello.TLSKeyShareExtension([
+            ext.ClientHelloExtensions.KeyShare([
                 KeyShareEntry(NamedGroup(0x001d), self.public_key["client"])
             ])
         ) # key share
@@ -572,85 +573,3 @@ class Client:
         self.record_num["client"] = self.record_num["server"] = 0
 
         self.phase = 8
-
-
-class TLSClientHelloFrame(TLSHandshakeFrame):
-    def __init__(self):
-        super().__init__()
-        self.type_id = 0x01 # Client Hello
-
-        self.tls_version =  TLSVersion("1.2") # TLS 1.2
-        self.random = None
-        self.legacy_session_id = None
-        self.cipher_suites = []
-        self.legacy_compression_methods = []
-        self.extensions = []
-    
-    @classmethod
-    def parse(cls, data:list):
-        if len(data) < 53:
-            raise ValueError("Too small data")
-        
-        result = cls()
-        
-        result.tls_version = data[0] * 0x100 + data[1]
-
-        result.random = data[2:34]
-
-        index = 34
-
-        result.legacy_session_id = data[35:35+data[index]]
-
-        index += data[index] + 1
-
-        for k in range(0, data[index] * 0x100 + data[index+1], 2):
-            result.cipher_suites.append(TLSCipherSuite.parse(data[index+k+2:index+k+4]))
-
-        index += 2 + len(result.cipher_suites) * 2
-
-        for k in range(0, data[index]):
-            result.legacy_compression_methods.append(data[index+k+1])
-
-        index += data[index] + 1
-
-        extensions_length = data[index] * 0x100 + data[index+1]
-
-        k = 2
-        while k < extensions_length + 2:
-            extension_length = data[index+k+2] * 0x100 + data[index+k+3]
-
-            if k + extension_length + 4 > extensions_length + 2:
-                raise RuntimeError("Illegal extension length")
-
-            result.extensions.append(ext.TLSExtension.parse(data[index+k:index+k+extension_length+4], ext.MODE["client_hello"]))
-
-            k += extension_length + 4
-
-        return result
-
-    def get_binary(self):
-        if not isinstance(self.random, (list, tuple)) or len(self.random) != 32:
-            raise RuntimeError("ClientHello random is not set or a wrong value")
-        
-        result = []
-
-        # Protocol Version
-        result.extend([3, 3]) # 0x0303
-
-        # random
-        result.extend(self.random)
-
-        # legacy session id ( ignore )
-        result.extend([0])
-
-        # cipher suites
-        result.extend(int_to_list(len(self.cipher_suites) * 2, 2))
-        for cipher_suite in self.cipher_suites:
-            result.extend(int_to_list(cipher_suite.type_id, 2))
-
-        # legacy compression methods
-        result.extend([1, 0])
-
-        result.extend(self.get_extensions_binary())
-
-        return result

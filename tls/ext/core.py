@@ -1,6 +1,11 @@
 from ..utils import *
 from .. import crypto
 
+__all__ = (
+    "MODE",
+    "TLSExtension"
+)
+
 MODE = {
     "client_hello": 0,
     "server_hello": 1,
@@ -59,17 +64,17 @@ class TLSExtension(object):
             raise ValueError("Broken TLS extension")
 
         if mode == "client_hello" or MODE["client_hello"]:
-            mod = client.client_hello
+            exts = ClientHelloExtensions
         elif mode == "server_hello" or MODE["server_hello"]:
-            mod = server.server_hello
+            exts = ServerHelloExtensions
         else:
-            mod = None
-        
-        if mod != None:
+            exts = None
+
+        if exts != None:
             if type_id in orgcls.extension_types:
-                cls_name = "TLS" + "".join([word.capitalize() for word in orgcls.extension_types[type_id].split("_")]) + "Extension"
-                if hasattr(mod, cls_name):
-                    cls = getattr(mod, cls_name)
+                cls_name = "".join([word.capitalize() for word in orgcls.extension_types[type_id].split("_")])
+                if hasattr(exts, cls_name):
+                    cls = getattr(exts, cls_name)
                     return cls.parse(data[4:])
 
         result = orgcls()
@@ -85,4 +90,5 @@ class TLSExtension(object):
         return True # FIXME
 
 # To prevent circular import, import them here
-from . import client, server
+from .client import ClientHelloExtensions
+from .server import ServerHelloExtensions, EncryptedExtensionsExtensions

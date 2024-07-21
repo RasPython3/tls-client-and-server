@@ -3,7 +3,7 @@ from datetime import datetime
 
 from cryptography.hazmat.primitives.kdf import hkdf
 from cryptography.hazmat.primitives import hashes, hmac
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -131,14 +131,31 @@ class HashAlgorithm(object):
         return hasher.finalize()
 
 class SignatureAlgorithm(object):
+    UNKNOWN = 0
+    ECDSA = 1
+    RSA = 2
+
     def __init__(self, type_id):
         self.type_id = type_id
         if type_id == 0x0403:
+            self.kind = self.__class__.ECDSA
             self.algorithm = ec.ECDSA(hashes.SHA256())
         elif type_id == 0x0404:
+            self.kind = self.__class__.ECDSA
             self.algorithm = ec.ECDSA(hashes.SHA384())
+        elif type_id == 0x0804: # "rsa_pss_rsae_sha256",:
+            self.kind = self.__class__.RSA
+            self.algorithm = rsa.ECDSA(hashes.SHA384())
+            self.padding
         else:
+            self.kind = self.__class__.UNKNOWN
             self.algorithm = None
+
+    def verify(self, public_key, signature, signature_source):
+        if self.kind == self.__class__.ECDSA:
+            public_key.verify(signature, signature_source, self.algorithm)
+        elif self.kind == self.__class__.RSA:
+            public_key.verify(signature, signature_source, self.algorithm)
 
 class HKDFLabel(object):
     def __init__(self, label:str, context:str, length:int):

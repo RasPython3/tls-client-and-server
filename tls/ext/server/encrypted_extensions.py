@@ -1,0 +1,2 @@
+class EncryptedExtensionsExtensions:
+    pass

@@ -2,6 +2,7 @@ from .. import core
 from ...utils import int_to_list
 from ...common import TLSVersion, KeyShareEntry
 
+
 class TLSSupportedVersionsExtension(core.TLSExtension):
     def __init__(self, version:TLSVersion):
         super().__init__(43)

@@ -30,37 +30,6 @@ def deriveSecret(secret, label, messages, hasher):
     return crypto.HKDFExpandLabel(secret, label, transcriptHash(messages, hasher), hasher.length, hasher)
 
 
-class TLSCipherSuite(object):
-    cipher_suite_types = {
-        0x1301: "TLS_AES_128_GCM_SHA256",
-        0x1302: "TLS_AES_256_GCM_SHA384",
-        0x1303: "TLS_CHACHA20_POLY1305_SHA256",
-        0x1304: "TLS_AES_128_CCM_SHA256",
-        0x1305: "TLS_AES_128_CCM_8_SHA256",
-    }
-    def __init__(self, type_id:int=0):
-        self.type_id = type_id # null
-        if type_id in (0x1301, 0x1303, 0x1304, 0x1305):
-            self.hash_algorithm = crypto.HashAlgorithm(crypto.HashAlgorithm.SHA256)
-        elif type_id in (0x1302,):
-            self.hash_algorithm = crypto.HashAlgorithm(crypto.HashAlgorithm.SHA384)
-        else:
-            self.hash_algorithm = None
-    
-    @classmethod
-    def parse(cls, data: list):
-        if len(data) != 2:
-            raise ValueError("Wrong size data")
-
-        type_id = data[0] * 0x100 + data[1]
-
-        result = cls(type_id)
-
-        return result
-    
-    def get_binary(self):
-        return int_to_list(self.type_id, 2)
-
 
 
 class TLSChildFrame(BaseTLSFrame):
@@ -123,19 +92,21 @@ class TLSCiphertext(TLSChildFrame):
 
 
 class TLSRecordFrame(TLSParentFrame):
-    def __init__(self, child=None, encrypted_child=None):
+    def __init__(self, child=None, encrypted_child=None, version:TLSVersion=TLSVersion("1.0")):
         if child != None:
             super().__init__(child)
         else:
             super().__init__(encrypted_child)
-        self.tls_version = 0x0301 # TLS 1.0
-        self.isencrypted = encrypted_child != None
+        self.tls_version = version
+        self.is_encrypted = encrypted_child != None
         self.encrypted_child = encrypted_child
 
     @classmethod
-    def parse(cls, data:list):
+    def parse(cls, data:list, possibly_encrypted=True):
         if len(data) < 5:
             raise RuntimeError("Illegal length")
+
+        version = TLSVersion(data[1] * 0x100 + data[2])
 
         if len(data) - 5 != data[3] * 0x100 + data[4]:
             raise RuntimeError("Illegal length")
@@ -147,18 +118,19 @@ class TLSRecordFrame(TLSParentFrame):
         elif data[0] == 22:
             child_cls = TLSHandshakeFrame
         elif data[0] == 23:
-            child_cls = TLSCiphertext
+            if possibly_encrypted:
+                child_cls = TLSCiphertext
+            else:
+                child_cls = TLSApplicationDataFrame
         elif data[0] == 24:
             child_cls = TLSHeartbeatFrame
         else:
             child_cls = TLSUnknownFrame
 
-        if data[0] != 23:
-            result = cls(child_cls.parse(data[5:]), None)
+        if data[0] != 23 or not possibly_encrypted:
+            result = cls(child_cls.parse(data[5:]), None, version)
         else:
-            result = cls(None, child_cls.parse(data[5:]))
-
-        result.tls_version = data[1] * 0x100 + data[2]
+            result = cls(None, child_cls.parse(data[5:]), version)
 
         return result
 
@@ -173,18 +145,18 @@ class TLSRecordFrame(TLSParentFrame):
         pass
 
     def get_binary(self):
-        if self.child == None and not self.isencrypted:
+        if self.child == None and not self.is_encrypted:
             raise RuntimeError("No data")
         result = [self.child.type_id]
         
-        if not self.isencrypted:
+        if not self.is_encrypted:
             child_binary = self.child.get_binary()
         else:
             if self.encrypted_child == None:
                 raise RuntimeError("No encrypted data")
             child_binary = self.encrypted_child.get_binary()
 
-        result.extend(int_to_list(self.tls_version, 2))
+        result.extend(int_to_list(self.tls_version.value, 2))
         result.extend(int_to_list(len(child_binary), 2))
         result.extend(child_binary)
 
@@ -337,19 +309,6 @@ class TLSHeartbeatFrame(TLSChildFrame):
     pass
 
 
-
-class TLSFinishedFrame(TLSHandshakeFrame):
-    def __init__(self, data):
-        super().__init__()
-        self.type_id = 0x14
-        self.verify_data = data
-
-    @classmethod
-    def parse(cls, data: list):
-        return cls(data)
-
-    def get_binary(self):
-        return self.verify_data
 
 class TLSMessageHashFrame(TLSChildFrame):
     def __init__(self, client_hello, hash_algorithm):
