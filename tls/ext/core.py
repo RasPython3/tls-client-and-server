@@ -63,9 +63,9 @@ class TLSExtension(object):
         if len(data) != data_length + 4:
             raise ValueError("Broken TLS extension")
 
-        if mode == "client_hello" or MODE["client_hello"]:
+        if mode == "client_hello" or mode == MODE["client_hello"]:
             exts = ClientHelloExtensions
-        elif mode == "server_hello" or MODE["server_hello"]:
+        elif mode == "server_hello" or mode == MODE["server_hello"]:
             exts = ServerHelloExtensions
         else:
             exts = None
