@@ -1,10 +1,10 @@
 from ..base import TLSHandshakeFrame
 
-from ..common import CertificateEntry
+from ...common import CertificateEntry
 
-from .. import ext, crypto
+from ... import ext, crypto
 
-from ..utils import int_to_list
+from ...utils import int_to_list
 
 class TLSCertificateFrame(TLSHandshakeFrame):
     def __init__(self, context, certs):

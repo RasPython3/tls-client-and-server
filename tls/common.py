@@ -251,10 +251,10 @@ class KeyShareEntry(object):
             self.key = key
 
     def get_binary(self):
-        if self.group.group_id == 0x001d: # X25519
+        if self.group.group_id in (0x0017, 0x001d): # secp256r1, X25519
             key_exchange_field = self.key
         else:
-            raise RuntimeError("unsupported named group. Only X25519 is supported.")
+            raise RuntimeError("unsupported named group. Only secp256r1 and X25519 are supported.")
         if isinstance(key_exchange_field, crypto.BaseKey):
             key_exchange_field = key_exchange_field.value
         return self.group.get_binary() + int_to_list(len(key_exchange_field), 2) + key_exchange_field
@@ -279,33 +279,6 @@ class CertificateEntry(object):
 
         return int_to_list(len(cert_data_binary), 3) + cert_data_binary + int_to_list(len(extension_binaries), 2) + extension_binaries
 
-class NetworkFrame(object):
-    def __init__(self):
-        pass
-    
-    @classmethod
-    def parse(cls, data):
-        return cls()
-    
-    def get_binary(self):
-        return []
-
-
-class BaseTLSFrame(NetworkFrame):
-    def __init__(self):
-        super().__init__()
-
-    def set_tls_header(self, data:list):
-        result = [self.tls_record_type, 3, 1] + int_to_list(len(data), 2) + data
-        return result
-
-    def get_extensions_binary(self):
-        extension_binaries = []
-
-        for extension in self.extensions:
-            extension_binaries.extend(extension.get_binary())
-
-        return int_to_list(len(extension_binaries), 2) + extension_binaries
 
 class ObjDict(dict):
     # object-like dict

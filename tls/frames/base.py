@@ -1,36 +1,35 @@
-from .common import BaseTLSFrame, TLSVersion
-from .utils import int_to_list
-from . import crypto
+from ..common import TLSVersion
 
-# crypto func
+from ..utils import int_to_list
 
-def transcript_hash(messages, hasher:crypto.HashAlgorithm):
-    result = []
-    for msg in messages:
-        #print(msg.child)
-        if isinstance(msg, BaseTLSFrame):
-            result.extend(msg.get_binary())
-        elif type(msg) == str:
-            result.extend(msg.encode("ascii"))
-        elif type(msg) == bytes:
-            result.extend(msg)
-        elif type(msg) == int:
-            result.append(msg)
-        elif isinstance(msg, (list, tuple)):
-            if all([type(i) == int for i in msg]):
-                result.extend(msg)
-            else:
-                raise TypeError("list/tuple elements must be int")
-        else:
-            raise TypeError("Unusable type " + str(type(msg)))
-    #print(result)
-    return hasher.hash(bytes(result))
-
-def deriveSecret(secret, label, messages, hasher):
-    return crypto.HKDFExpandLabel(secret, label, transcriptHash(messages, hasher), hasher.length, hasher)
+class NetworkFrame(object):
+    def __init__(self):
+        pass
+    
+    @classmethod
+    def parse(cls, data):
+        return cls()
+    
+    def get_binary(self):
+        return []
 
 
+class BaseTLSFrame(NetworkFrame):
+    def __init__(self):
+        super().__init__()
 
+    def set_tls_header(self, data:list):
+        result = [self.tls_record_type, 3, 1] + int_to_list(len(data), 2) + data
+        return result
+
+    def get_extensions_binary(self):
+        extension_binaries = []
+
+        for extension in self.extensions:
+            extension_binaries.extend(extension.get_binary())
+
+        return int_to_list(len(extension_binaries), 2) + extension_binaries
+        
 
 class TLSChildFrame(BaseTLSFrame):
     def __init__(self, data=None):

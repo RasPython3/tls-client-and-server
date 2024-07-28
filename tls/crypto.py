@@ -3,30 +3,33 @@ from datetime import datetime
 
 from cryptography.hazmat.primitives.kdf import hkdf
 from cryptography.hazmat.primitives import hashes, hmac
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, padding
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from cryptography.x509 import DNSName, load_der_x509_certificate, load_pem_x509_certificates
 from cryptography.x509.verification import PolicyBuilder, Store
 
-from cryptography.hazmat.primitives.serialization import Encoding
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
 from .utils import int_to_list
 
 X25519 = 0x001D
+SECP256R1 = 0x0017
 
 class BaseKey:
 
     X25519 = 0x001D
+    SECP256R1 = 0x0017
 
     def __init__(self, value:list, key_type):
         self.value = value
         self.key_type = key_type
         self.key_types = {
-            0x001D: "X25519"
+            0x001D: "X25519",
+            0x0017: "secp256r1"
         }
         self.internal_key = None
 
@@ -61,6 +64,13 @@ class PrivateKey(BaseKey):
             result.internal_key = X25519PrivateKey.generate()
             result.value = [*result.internal_key.private_bytes_raw()]
             return result
+        elif key_type == cls.SECP256R1:
+            result = cls(None, key_type)
+            result.internal_key = ec.generate_private_key(
+                ec.SECP256R1()
+            )
+            result.value = "secp256r1-private-key"
+            return result
         else:
             raise TypeError("unsupported key type")
     
@@ -81,6 +91,12 @@ class PublicKey(BaseKey):
             result = cls(None, private.key_type)
             result.internal_key = private.internal_key.public_key()
             result.value = [*result.internal_key.public_bytes_raw()]
+            return result
+        elif private.key_type == cls.SECP256R1:
+            result = cls(None, private.key_type)
+            result.internal_key = private.internal_key.public_key()
+            nums = result.internal_key.public_numbers()
+            result.value = [4] + int_to_list(nums.x, 32) + int_to_list(nums.y, 32)
             return result
         else:
             raise TypeError("unsupported key type")
@@ -145,8 +161,7 @@ class SignatureAlgorithm(object):
             self.algorithm = ec.ECDSA(hashes.SHA384())
         elif type_id == 0x0804: # "rsa_pss_rsae_sha256",:
             self.kind = self.__class__.RSA
-            self.algorithm = rsa.ECDSA(hashes.SHA384())
-            self.padding
+            self.algorithm = hashes.SHA256()
         else:
             self.kind = self.__class__.UNKNOWN
             self.algorithm = None
@@ -155,7 +170,17 @@ class SignatureAlgorithm(object):
         if self.kind == self.__class__.ECDSA:
             public_key.verify(signature, signature_source, self.algorithm)
         elif self.kind == self.__class__.RSA:
-            public_key.verify(signature, signature_source, self.algorithm)
+            if self.type_id == 0x0804:
+                public_key.verify(
+                    signature,
+                    signature_source,
+                    padding.PSS(
+                        mgf=padding.MGF1(self.algorithm),
+                        salt_length=padding.PSS.MAX_LENGTH
+                    ),
+                    self.algorithm
+                )
+        return True
 
 class HKDFLabel(object):
     def __init__(self, label:str, context:str, length:int):
@@ -196,6 +221,30 @@ def HKDFExtract(salt, ikm, hasher):
     # salt -> key, ikm -> value
     key = hasher.hmac(salt, ikm)
     return key
+
+from .frames.base import BaseTLSFrame
+
+def transcript_hash(messages, hasher:HashAlgorithm):
+    result = []
+    for msg in messages:
+        #print(msg.child)
+        if isinstance(msg, BaseTLSFrame):
+            result.extend(msg.get_binary())
+        elif type(msg) == str:
+            result.extend(msg.encode("ascii"))
+        elif type(msg) == bytes:
+            result.extend(msg)
+        elif type(msg) == int:
+            result.append(msg)
+        elif isinstance(msg, (list, tuple)):
+            if all([type(i) == int for i in msg]):
+                result.extend(msg)
+            else:
+                raise TypeError("list/tuple elements must be int")
+        else:
+            raise TypeError("Unusable type " + str(type(msg)))
+    #print(result)
+    return hasher.hash(bytes(result))
 
 def verify_certificates(leaf, certs: list = []):
     return True # Trust All!

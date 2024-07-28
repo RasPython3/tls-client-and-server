@@ -1,8 +1,8 @@
 from ..base import TLSHandshakeFrame
 
-from ..common import SignatureScheme
+from ...common import SignatureScheme
 
-from ..utils import int_to_list
+from ...utils import int_to_list
 
 class TLSCertificateVerifyFrame(TLSHandshakeFrame):
     def __init__(self, signature_algorithm, signature:list):

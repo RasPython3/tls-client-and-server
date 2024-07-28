@@ -1,10 +1,10 @@
-from ..common import TLSVersion, CipherSuite
+from ...common import TLSVersion, CipherSuite
 
 from ..base import TLSHandshakeFrame
 
-from .. import ext
+from ... import ext
 
-from ..utils import int_to_list
+from ...utils import int_to_list
 
 
 class TLSClientHelloFrame(TLSHandshakeFrame):

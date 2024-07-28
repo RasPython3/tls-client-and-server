@@ -1,10 +1,9 @@
-from .common import TLSVersion, NetworkFrame, CipherSuite, SignatureScheme, NamedGroup, KeyShareEntry
+from . import crypto, ext
 
-from .base import TLSParentFrame, TLSRecordFrame, TLSInnerPlaintext, TLSCiphertext, TLSHandshakeFrame, TLSApplicationDataFrame, TLSAlertFrame, transcript_hash
+from .common import TLSVersion, CipherSuite, SignatureScheme, NamedGroup, KeyShareEntry
 
-from .frames import TLSClientHelloFrame, TLSServerHelloFrame, TLSHelloRetryRequestFrame, TLSEncryptedExtensionsFrame, TLSCertificateFrame, TLSCertificateVerifyFrame, TLSFinishedFrame
-
-from . import ext, crypto
+from .frames import NetworkFrame, TLSParentFrame, TLSRecordFrame, TLSInnerPlaintext, TLSCiphertext, TLSHandshakeFrame, TLSApplicationDataFrame, TLSAlertFrame, \
+    TLSClientHelloFrame, TLSServerHelloFrame, TLSHelloRetryRequestFrame, TLSEncryptedExtensionsFrame, TLSCertificateFrame, TLSCertificateVerifyFrame, TLSFinishedFrame
 
 from .utils import gen_random, int_to_list
 
@@ -44,6 +43,7 @@ class Client:
         self._isconnected = False
         self.random = {"client": None, "server": None}
         self.secret = {"client": None, "server": None}
+        self.key_pairs = {}
         self.private_key = {"client": None, "server": None}
         self.public_key = {"client": None, "server": None}
         self.shared_key = None
@@ -251,7 +251,7 @@ class Client:
             data.extend(msgs[1:])
         else:
             data.extend(msgs)
-        return transcript_hash([i.child for i in data], hasher)
+        return crypto.transcript_hash([i.child for i in data], hasher)
 
     def generate_handshake_secrets(self):
         hasher = self.cipher_suite.hash_algorithm
@@ -266,10 +266,18 @@ class Client:
         self.secret["client"] = client_secret = crypto.HKDFExpandLabel(handshake_secret, "c hs traffic", hello_hash, hasher.length, hasher)
         self.secret["server"] = server_secret = crypto.HKDFExpandLabel(handshake_secret, "s hs traffic", hello_hash, hasher.length, hasher)
 
-        self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
-        self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
-        self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
-        self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        if self.cipher_suite.type_id in (0x1301,):
+            self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 16, hasher)]
+            self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 16, hasher)]
+            self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        elif self.cipher_suite.type_id in (0x1302,):
+            self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
+            self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
+            self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        else:
+            raise RuntimeError("Could not generate secrets")
 
     def generate_application_secrets(self):
         hasher = self.cipher_suite.hash_algorithm
@@ -288,10 +296,18 @@ class Client:
         self.secret["client"] = client_secret = crypto.HKDFExpandLabel(master_secret, "c ap traffic", handshake_hash, hasher.length, hasher)
         self.secret["server"] = server_secret = crypto.HKDFExpandLabel(master_secret, "s ap traffic", handshake_hash, hasher.length, hasher)
 
-        self.application_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
-        self.application_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
-        self.application_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
-        self.application_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        if self.cipher_suite.type_id in (0x1301,):
+            self.application_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 16, hasher)]
+            self.application_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 16, hasher)]
+            self.application_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.application_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        elif self.cipher_suite.type_id in (0x1302,):
+            self.application_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
+            self.application_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
+            self.application_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.application_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        else:
+            raise RuntimeError("Could not generate secrets")
 
     def decrypt_message(self, record: TLSRecordFrame, key:list, iv:list):
         key = key
@@ -438,31 +454,36 @@ class Client:
                 raise e
             return False
 
+    def generate_key_pairs(self, group_ids):
+        for group_id in group_ids:
+            self.key_pairs[group_id] = {}
+            self.key_pairs[group_id]["private"] = crypto.PrivateKey.generate(group_id)
+            self.key_pairs[group_id]["public"] = crypto.PublicKey.from_private(self.key_pairs[group_id]["private"])
+
     def handshake(self):
         self.check_connected()
 
-        client_random = self.random["client"] = gen_random(32)
+        self.generate_key_pairs((0x001d,)) #0x0017, 
 
-        self.private_key["client"] = crypto.PrivateKey.generate(crypto.X25519)
-        self.public_key["client"] = crypto.PublicKey.from_private(self.private_key["client"])
+        client_random = self.random["client"] = gen_random(32)
 
         self.shared_key = None
 
         client_hello = TLSClientHelloFrame()
         client_hello.random = client_random
-        client_hello.cipher_suites.append(CipherSuite(0x1302)) # TLS_AES_256_GCM_SHA384
+        client_hello.cipher_suites.append(CipherSuite(0x1301)) # TLS_AES_256_GCM_SHA384
         client_hello.extensions.append(
             ext.ClientHelloExtensions.SupportedVersions([TLSVersion("1.3")])
         ) # supported versions
         client_hello.extensions.append(
-            ext.ClientHelloExtensions.SignatureAlgorithms([SignatureScheme(0x0403)])
+            ext.ClientHelloExtensions.SignatureAlgorithms([SignatureScheme(0x0804)])
         ) # signature algorithms
         client_hello.extensions.append(
-            ext.ClientHelloExtensions.SupportedGroups([NamedGroup(0x001d)])
+            ext.ClientHelloExtensions.SupportedGroups([NamedGroup(group_id) for group_id in self.key_pairs])
         ) # supported groups ecdhe x25195
         client_hello.extensions.append(
             ext.ClientHelloExtensions.KeyShare([
-                KeyShareEntry(NamedGroup(0x001d), self.public_key["client"])
+                KeyShareEntry(NamedGroup(group_id), self.key_pairs[group_id]["public"]) for group_id in self.key_pairs
             ])
         ) # key share
 
@@ -501,11 +522,15 @@ class Client:
             raise RuntimeError("Illegal CipherSuite!")
 
         self.cipher_suite = server_hello.cipher_suite
+        print("Cipher Suite: " + hex(self.cipher_suite.type_id))
 
         for extension in server_hello.extensions:
             if extension.type_id == 51:
-                if extension.entry.group.group_id == 0x001d: # X25519, must always True
-                    self.public_key["server"] = crypto.PublicKey(extension.entry.key.value, crypto.X25519)
+                if extension.entry.group.group_id in (0x001d, 0x0017): # X25519, must always True
+                    self.private_key["client"] = self.key_pairs[extension.entry.group.group_id]["private"]
+                    self.public_key["client"] = self.key_pairs[extension.entry.group.group_id]["public"]
+
+                    self.public_key["server"] = crypto.PublicKey(extension.entry.key.value, extension.entry.group.group_id)
                     self.shared_key = self.private_key["client"].exchange(self.public_key["server"])
 
         if self.shared_key == None:

@@ -1,6 +1,6 @@
 from ..base import TLSHandshakeFrame
 
-from .. import ext
+from ... import ext
 
 class TLSEncryptedExtensionsFrame(TLSHandshakeFrame):
     def __init__(self):
