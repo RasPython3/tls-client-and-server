@@ -19,8 +19,19 @@ class TLSSupportedVersionsExtension(core.TLSExtension):
     def data(self, value):
         pass
 
-    def parse(self, data: list):
-        pass
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) == 0:
+            raise RuntimeError("Illegal length")
+        length = data[0]
+        index = 1
+        versions = []
+        while index-1 < length:
+            if index+1 > length:
+                raise RuntimeError("Illegal length")
+            versions.append(TLSVersion(data[index] * 0x100 + data[index+1]))
+            index += 2
+        return cls(versions)
 
 class TLSSupportedGroupsExtension(core.TLSExtension):
     def __init__(self, groups:list=[]):
@@ -36,9 +47,21 @@ class TLSSupportedGroupsExtension(core.TLSExtension):
     @data.setter
     def data(self, value):
         pass
-    
-    def parse(self, data: list):
-        pass
+
+    @classmethod
+    def parse(cls, data: list):
+        if len(data) == 0:
+            return RuntimeError("Illegal length")
+        length = data[0] * 0x100 + data[1]
+        index = 2
+        groups = []
+        while index < length+2:
+            if index+2 > length+2:
+                return RuntimeError("Illegal length")
+            groups.append(NamedGroup.parse(data[index:index+2]))
+            index += 2
+        return cls(groups)
+        
 
 
 class TLSSignatureAlgorithmsExtension(core.TLSExtension):
@@ -60,8 +83,9 @@ class TLSSignatureAlgorithmsExtension(core.TLSExtension):
     def data(self, value):
         pass
 
-    def parse(self, data: list):
-        pass
+    @classmethod
+    def parse(cls, data: list):
+        return cls(SignatureSchemeList.parse(data))
 
 class TLSKeyShareExtension(core.TLSExtension):
     def __init__(self, entries:list):
@@ -86,7 +110,7 @@ class TLSKeyShareExtension(core.TLSExtension):
         if len(data) - 2 != data[0] * 0x100 + data[1]:
             raise RuntimeError("Illegal length")
         index = 2
-        data_length = len(data) - 2
+        data_length = len(data)
         entries = []
         while index < data_length:
             if index+4 > data_length:

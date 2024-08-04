@@ -82,7 +82,7 @@ class TLSExtension(object):
         result.data = data[4:]
 
         return result
-    
+
     def get_binary(self):
         return int_to_list(self.type_id, 2) + int_to_list(len(self.data), 2) + self.data
     

@@ -8,16 +8,16 @@ from ...utils import int_to_list
 
 
 class TLSServerHelloFrame(TLSHandshakeFrame):
-    def __init__(self):
+    def __init__(self, version:TLSVersion=TLSVersion("1.2"), random:list=None, legacy_session_id:list=None, cipher_suite:CipherSuite=None, extensions:list=[]):
         super().__init__()
         self.type_id = 0x02 # Server Hello
 
-        self.tls_version = TLSVersion("1.2") # TLS 1.2
-        self.random = None
-        self.legacy_session_id = None
-        self.cipher_suite = None
+        self.tls_version = version # TLS 1.2
+        self.random = random
+        self.legacy_session_id = legacy_session_id
+        self.cipher_suite = cipher_suite
         self.legacy_compression_method = 0
-        self.extensions = []
+        self.extensions = extensions
     
     @classmethod
     def parse(cls, data:list):
@@ -72,8 +72,12 @@ class TLSServerHelloFrame(TLSHandshakeFrame):
         # random
         result.extend(self.random)
 
-        # legacy session id ( ignore )
-        result.extend([0])
+        # legacy session id
+        if self.legacy_session_id:
+            result.append(len(self.legacy_session_id))
+            result.extend(self.legacy_session_id)
+        else:
+            result.append(0)
 
         # cipher suite
         result.extend(int_to_list(self.cipher_suite.type_id, 2))

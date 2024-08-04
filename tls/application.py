@@ -1,4 +1,5 @@
 from .client import Client
+from .server import Server
 
 class ApplicationType:
     CLIENT = 0
@@ -9,6 +10,8 @@ class Application:
         self.app_type = app_type
         if app_type == ApplicationType.CLIENT:
             self.tls_app = Client()
+        elif app_type == ApplicationType.SERVER:
+            self.tls_app = Server()
         else:
             raise RuntimeError("Unsupported application type")
 
@@ -17,6 +20,9 @@ class Application:
     def start(self, url: str, port: int):
         if self.app_type == ApplicationType.CLIENT:
             self.tls_app.connect(url, port)
+            self.tls_app.handshake()
+        else:
+            self.tls_app.listen(url, port)
             self.tls_app.handshake()
 
     def end(self):

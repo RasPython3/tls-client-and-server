@@ -486,6 +486,12 @@ class Client:
                 KeyShareEntry(NamedGroup(group_id), self.key_pairs[group_id]["public"]) for group_id in self.key_pairs
             ])
         ) # key share
+        client_hello.extensions.append(
+            ext.TLSExtension(
+                45,
+                [1, 1]
+            )
+        )
 
         server_hello = None
 

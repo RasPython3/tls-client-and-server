@@ -226,7 +226,7 @@ class SignatureSchemeList(list):
 
     @classmethod
     def parse(cls, data: list):
-        if len(data) < 2 or len(data) - 2 != data[1] * 0x100 + data[0]:
+        if len(data) < 2 or len(data) - 2 != data[0] * 0x100 + data[1]:
             raise RuntimeError("Illegal length")
         schemes = []
         for i in range(2, len(data), 2):

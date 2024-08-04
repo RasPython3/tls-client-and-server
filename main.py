@@ -9,6 +9,16 @@ class Pinger(Application):
 
         print(self.recv())
 
+class Ponger(Application):
+    def __init__(self):
+        super().__init__(ApplicationType.SERVER)
+
+    def main(self):
+        if self.recv() == b"ping":
+            self.send("ping")
+
+        print("ping-pong!")
+
 class HttpClient(Application):
     def __init__(self):
         super().__init__(ApplicationType.CLIENT)
@@ -18,5 +28,5 @@ class HttpClient(Application):
         print(bytes(self.recv()).decode("utf-8"))
 
 if __name__ == "__main__":
-    app = HttpClient()
-    app.run("172.23.91.188", 8080)
+    app = Ponger()
+    app.run("172.23.91.188", 50000)

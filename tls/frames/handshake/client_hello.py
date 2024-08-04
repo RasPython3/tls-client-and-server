@@ -74,7 +74,10 @@ class TLSClientHelloFrame(TLSHandshakeFrame):
         result.extend(self.random)
 
         # legacy session id ( ignore )
-        result.extend([0])
+        if self.legacy_session_id != None:
+            result.extend([len(self.legacy_session_id)] + self.legacy_session_id)
+        else:
+            result.append(0)
 
         # cipher suites
         result.extend(int_to_list(len(self.cipher_suites) * 2, 2))

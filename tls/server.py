@@ -40,6 +40,7 @@ class Server:
             raise RuntimeError("Only TLS 1.3 is supported")
         self.version = version
         self.sock = None
+        self.conn = None
         self._isconnected = False
         self.random = {"client": None, "server": None}
         self.secret = {"client": None, "server": None}
@@ -89,17 +90,17 @@ class Server:
                 if self.phase < 8: # Handshake
                     data = self.encrypt_message(
                         data,
-                        self.handshake_key["client"],
-                        self.handshake_iv["client"]
+                        self.handshake_key["server"],
+                        self.handshake_iv["server"]
                     )
                 else: # Application
                     data = self.encrypt_message(
                         data,
-                        self.application_key["client"],
-                        self.application_iv["client"]
+                        self.application_key["server"],
+                        self.application_iv["server"]
                     )
-            self.record_num["client"] += 1
-        return self.sock.send(bytes(data.get_binary()))
+            self.record_num["server"] += 1
+        return self.conn.send(bytes(data.get_binary()))
 
     def raw_recv(self, recv_alert=False):
         received = False
@@ -113,7 +114,7 @@ class Server:
 
             buffer_size = 5 # TLS header
             while tls_length < 0 or len(data) < 5 + tls_length:
-                data.extend(self.sock.recv(buffer_size))
+                data.extend(self.conn.recv(buffer_size))
 
                 if tls_length < 0 and len(data) >= 5:
                     tls_type = data[0]
@@ -128,10 +129,10 @@ class Server:
             plaintext = None
             if result.child_id == 23: # Application Data, encrypted
                 if self.phase < 8:
-                    self.decrypt_message(result, self.handshake_key["server"], self.handshake_iv["server"])
+                    self.decrypt_message(result, self.handshake_key["client"], self.handshake_iv["client"])
                 else:
-                    self.decrypt_message(result, self.application_key["server"], self.application_iv["server"])
-                self.record_num["server"] += 1
+                    self.decrypt_message(result, self.application_key["client"], self.application_iv["client"])
+                self.record_num["client"] += 1
                 plaintext = TLSInnerPlaintext.parse(result.child.raw_data)
                 #print([plaintext.content_type] + \
                 #    int_to_list(result.tls_version, 2) + \
@@ -164,17 +165,26 @@ class Server:
 
             self.received_frames.append(result)
 
+            print_tree(result, 0)
+
             if (plaintext == None and data[:tls_length+5] != result.get_binary()) or \
                 (plaintext != None and plaintext.content != result.child.get_binary()):
                 print("decode-then-encode failed")
                 al = data[:tls_length+5]
                 bl = result.get_binary()
+                print("original = {}\n\nreencoded = {}".format(str(al), str(bl)))
                 cl = []
-                for i in range(len(al)):
-                    cl.append(al[i] - bl[i])
+                for i in range(max(len(al), len(bl))):
+                    if len(al) > i:
+                        if len(bl) > i:
+                            cl.append(al[i] - bl[i])
+                        else:
+                            cl.append(al[i])
+                    else:
+                        cl.append(-bl[i])
+
                 print(cl)
 
-            print_tree(result, 0)
 
             if result.child_id == 21:
                 # Alert
@@ -227,7 +237,7 @@ class Server:
     def check_fatal(self):
         if self.phase == -1 and self.received_alert != None:
             self.close()
-            raise RuntimeError("The server returned fatal alert: " + self.received_alert.get_description_text())
+            raise RuntimeError("The client returned fatal alert: " + self.received_alert.get_description_text())
 
     def transcript_hash_msgs(self, msgs, hasher) -> bytes:
         data = []
@@ -401,20 +411,23 @@ class Server:
 
         return verify_data
 
-    def listen(self, port:int):
+    def listen(self, url:str, port:int):
         if self.phase != 0:
             return
         if self.isconnected:
             raise RuntimeError("Already connected")
-        self.sock = socket.create_server(("", port))
+        self.sock = socket.create_server((url, port))
         self._isconnected = True
+        self.sock.listen(1)
+
+        self.conn, addr = self.sock.accept()
 
     def close(self, raise_exception=False):
         if self.phase not in (-1, 0, 1):
             if self.phase == 8:
                 alert = TLSAlertFrame(1, 0)
             else:
-                alert = TLSAlertFrame(2, 90)
+                alert = TLSAlertFrame(2, 80)
             self.raw_send(
                 TLSRecordFrame(
                     alert
@@ -427,6 +440,7 @@ class Server:
                         break
         self.phase = 0
         try:
+            self.conn.close()
             self.sock.close()
             self.sock.shutdown(socket.SHUT_RD)
             return True
@@ -438,79 +452,80 @@ class Server:
     def handshake(self):
         self.check_connected()
 
-        client_random = self.random["client"] = gen_random(32)
-
-        self.private_key["client"] = crypto.PrivateKey.generate(crypto.X25519)
-        self.public_key["client"] = crypto.PublicKey.from_private(self.private_key["client"])
+        server_random = self.random["server"] = gen_random(32)
 
         self.shared_key = None
 
-        client_hello = TLSClientHelloFrame()
-        client_hello.random = client_random
-        client_hello.cipher_suites.append(CipherSuite(0x1302)) # TLS_AES_256_GCM_SHA384
-        client_hello.extensions.append(
-            ext.ClientHelloExtensions.SupportedVersions([TLSVersion("1.3")])
-        ) # supported versions
-        client_hello.extensions.append(
-            ext.ClientHelloExtensions.SignatureAlgorithms([SignatureScheme(0x0403)])
-        ) # signature algorithms
-        client_hello.extensions.append(
-            ext.ClientHelloExtensions.SupportedGroups([NamedGroup(0x001d)])
-        ) # supported groups ecdhe x25195
-        client_hello.extensions.append(
-            ext.ClientHelloExtensions.KeyShare([
-                KeyShareEntry(NamedGroup(0x001d), self.public_key["client"])
-            ])
-        ) # key share
+        self.phase = 1
 
-        server_hello = None
+        client_hello = self.raw_recv()
 
-        while self.phase in (0, 2):
-            self.phase = 1
+        if client_hello.child_id != 22 or client_hello.child.child_id != 0x01:
+            raise RuntimeError("Illegal message!")
 
-            self.raw_send(
-                TLSRecordFrame(
-                    TLSHandshakeFrame(
-                        client_hello
-                    )
-                )
-            )
+        self.phase = 2
 
-            self.phase = 2
+        client_hello = client_hello.child.child
 
-            server_hello = self.raw_recv()
-
-            if server_hello.child_id != 22 or server_hello.child.child_id not in (0x02, 0x06):
-                raise RuntimeError("Illegal message!")
-
-            if server_hello.child.child_id == 0x06:
-                # HelloRetryRequest
-                continue
-            else:
-                self.phase = 3
-
-        server_hello = server_hello.child.child
-
-        if all([extension.type_id != 43 for extension in server_hello.extensions]):
+        if all([extension.type_id != 43 for extension in client_hello.extensions]):
             raise RuntimeError("Could not negotiate with TLS 1.3")
 
-        if server_hello.cipher_suite.type_id not in [cipher_suite.type_id for cipher_suite in client_hello.cipher_suites]:
-            raise RuntimeError("Illegal CipherSuite!")
+        if all([type_id not in [cipher_suite.type_id for cipher_suite in client_hello.cipher_suites] for type_id in (0x1301, 0x1302)]):
+            raise RuntimeError("No supported CipherSuite!")
 
-        self.cipher_suite = server_hello.cipher_suite
+        if 0x1302 in [cipher_suite.type_id for cipher_suite in client_hello.cipher_suites]:
+            self.cipher_suite = CipherSuite(0x1302)
+        else:
+            self.cipher_suite = CipherSuite(0x1301)
 
-        for extension in server_hello.extensions:
+        for extension in client_hello.extensions:
             if extension.type_id == 51:
-                if extension.entry.group.group_id == 0x001d: # X25519, must always True
-                    self.public_key["server"] = crypto.PublicKey(extension.entry.key.value, crypto.X25519)
-                    self.shared_key = self.private_key["client"].exchange(self.public_key["server"])
+                for entry in extension.entries:
+                    if entry.group.group_id == 0x001d: # X25519, must always True
+                        group_id = 0x001d
+                        self.private_key["server"] = crypto.PrivateKey.generate(0x001d)
+                        self.public_key["server"] = crypto.PublicKey.from_private(self.private_key["server"])
+                        self.public_key["client"] = crypto.PublicKey(entry.key.value, crypto.X25519)
+                        self.shared_key = self.private_key["server"].exchange(self.public_key["client"])
 
         if self.shared_key == None:
             raise RuntimeError("Could not get shared key")
 
+        server_hello = TLSServerHelloFrame(
+            TLSVersion("1.2"),
+            server_random,
+            client_hello.legacy_session_id,
+            self.cipher_suite,
+            [
+                ext.ServerHelloExtensions.SupportedVersions(TLSVersion("1.3")),
+                ext.ServerHelloExtensions.KeyShare(
+                    KeyShareEntry(NamedGroup(group_id), self.public_key["server"])
+                )
+            ]
+        )
+
+        self.raw_send(
+            TLSRecordFrame(
+                TLSHandshakeFrame(
+                    server_hello
+                )
+            )
+        )
+
         self.generate_handshake_secrets()
 
-        encrypted_extensions = None
+        self.phase = 3
+
+        encrypted_extensions = TLSEncryptedExtensionsFrame()
+
+        self.raw_send(
+            TLSRecordFrame(
+                TLSHandshakeFrame(
+                    encrypted_extensions
+                )
+            )
+        )
+
         recv_change_cipher_spec = False # for compatibility
         while self.phase == 3:
             encrypted_extensions = self.raw_recv()
