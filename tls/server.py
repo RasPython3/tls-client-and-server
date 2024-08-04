@@ -252,7 +252,6 @@ class Server:
 
     def transcript_hash_msgs(self, msgs, hasher) -> bytes:
         data = []
-        print(msgs)
         if len(msgs) >= 2 and \
             isinstance(msgs[0], TLSRecordFrame) and \
             isinstance(msgs[0].child, TLSHandshakeFrame) and \
@@ -594,10 +593,16 @@ class Server:
             )
         )
 
-        client_finished = self.raw_recv()
-
-        if client_finished.child_id != 22 or client_finished.child.child_id != 20:
-            raise RuntimeError("Illegal message!")
+        recv_change_cipher_spec = False
+        while True:
+            client_finished = self.raw_recv()
+            if client_finished.child_id == 20 and recv_change_cipher_spec == False:
+                recv_change_cipher_spec = True
+                continue
+            if client_finished.child_id == 22 and client_finished.child.child_id == 20:
+                break
+            else:
+                raise RuntimeError("Illegal message!")
 
         client_finished = client_finished.child.child
 
