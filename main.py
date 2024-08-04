@@ -1,3 +1,5 @@
+import sys
+
 from tls.application import Application, ApplicationType
 
 class Pinger(Application):
@@ -28,5 +30,8 @@ class HttpClient(Application):
         print(bytes(self.recv()).decode("utf-8"))
 
 if __name__ == "__main__":
-    app = Ponger()
+    if "-server" in sys.argv:
+        app = Ponger()
+    else:
+        app = Pinger()
     app.run("172.23.91.188", 50000)

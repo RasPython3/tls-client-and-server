@@ -7,10 +7,10 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from cryptography.x509 import DNSName, load_der_x509_certificate, load_pem_x509_certificates
+from cryptography.x509 import DNSName, load_der_x509_certificate, load_pem_x509_certificate, load_pem_x509_certificates
 from cryptography.x509.verification import PolicyBuilder, Store
 
-from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption
+from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, PublicFormat, NoEncryption, load_pem_private_key
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
 
@@ -181,6 +181,21 @@ class SignatureAlgorithm(object):
                     self.algorithm
                 )
         return True
+
+    def derive(self, private_key, signature_source):
+        if self.kind == self.__class__.ECDSA:
+            return private_key.sign(signature_source, self.algorithm)
+        elif self.kind == self.__class__.RSA:
+            if self.type_id == 0x0804:
+                return private_key.sign(
+                    signature_source,
+                    padding.PSS(
+                        mgf=padding.MGF1(self.algorithm),
+                        salt_length=padding.PSS.MAX_LENGTH
+                    ),
+                    self.algorithm
+                )
+        return None
 
 class HKDFLabel(object):
     def __init__(self, label:str, context:str, length:int):

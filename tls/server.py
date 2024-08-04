@@ -1,14 +1,17 @@
+import socket
+import secrets
+import re
+
 from . import crypto, ext
 
-from .common import TLSVersion, CipherSuite, SignatureScheme, NamedGroup, KeyShareEntry
+from .common import TLSVersion, CipherSuite, SignatureScheme, NamedGroup, KeyShareEntry, CertificateEntry
 
 from .frames import NetworkFrame, TLSParentFrame, TLSRecordFrame, TLSInnerPlaintext, TLSCiphertext, TLSHandshakeFrame, TLSApplicationDataFrame, TLSAlertFrame, \
     TLSClientHelloFrame, TLSServerHelloFrame, TLSHelloRetryRequestFrame, TLSEncryptedExtensionsFrame, TLSCertificateFrame, TLSCertificateVerifyFrame, TLSFinishedFrame
 
 from .utils import gen_random, int_to_list
 
-import secrets
-import socket
+
 
 def print_tree(data, direction=0): # 0: in, 1: out
     target = data
@@ -57,6 +60,14 @@ class Server:
         self.received_frames = []
         self.received_alert = None
         self.cipher_suite = None
+        self.signature_scheme = None
+
+        self.certificates = []
+        with open("/".join(re.split("[/\\\\]", __file__)[:-1]) + "/servercert.pem", mode="rb") as f:
+            self.certificates.append(crypto.load_pem_x509_certificate(f.read()))
+
+        with open("/".join(re.split("[/\\\\]", __file__)[:-1]) + "/serverkey.pem", mode="rb") as f:
+            self.cert_private_key = crypto.load_pem_private_key(f.read(), None)
 
         self.phase = 0
         self.record_num = {"client": 0, "server": 0}
@@ -241,6 +252,7 @@ class Server:
 
     def transcript_hash_msgs(self, msgs, hasher) -> bytes:
         data = []
+        print(msgs)
         if len(msgs) >= 2 and \
             isinstance(msgs[0], TLSRecordFrame) and \
             isinstance(msgs[0].child, TLSHandshakeFrame) and \
@@ -275,10 +287,18 @@ class Server:
         self.secret["client"] = client_secret = crypto.HKDFExpandLabel(handshake_secret, "c hs traffic", hello_hash, hasher.length, hasher)
         self.secret["server"] = server_secret = crypto.HKDFExpandLabel(handshake_secret, "s hs traffic", hello_hash, hasher.length, hasher)
 
-        self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
-        self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
-        self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
-        self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        if self.cipher_suite.type_id in (0x1301,):
+            self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 16, hasher)]
+            self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 16, hasher)]
+            self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        elif self.cipher_suite.type_id in (0x1302,):
+            self.handshake_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
+            self.handshake_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
+            self.handshake_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.handshake_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        else:
+            raise RuntimeError("Could not generate secrets")
 
     def generate_application_secrets(self):
         hasher = self.cipher_suite.hash_algorithm
@@ -297,10 +317,18 @@ class Server:
         self.secret["client"] = client_secret = crypto.HKDFExpandLabel(master_secret, "c ap traffic", handshake_hash, hasher.length, hasher)
         self.secret["server"] = server_secret = crypto.HKDFExpandLabel(master_secret, "s ap traffic", handshake_hash, hasher.length, hasher)
 
-        self.application_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
-        self.application_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
-        self.application_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
-        self.application_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        if self.cipher_suite.type_id in (0x1301,):
+            self.application_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 16, hasher)]
+            self.application_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 16, hasher)]
+            self.application_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.application_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        elif self.cipher_suite.type_id in (0x1302,):
+            self.application_key["client"] = [*crypto.HKDFExpandLabel(client_secret, "key", "", 32, hasher)]
+            self.application_key["server"] = [*crypto.HKDFExpandLabel(server_secret, "key", "", 32, hasher)]
+            self.application_iv["client"] = [*crypto.HKDFExpandLabel(client_secret, "iv", "", 12, hasher)]
+            self.application_iv["server"] = [*crypto.HKDFExpandLabel(server_secret, "iv", "", 12, hasher)]
+        else:
+            raise RuntimeError("Could not generate secrets")
 
     def decrypt_message(self, record: TLSRecordFrame, key:list, iv:list):
         key = key
@@ -364,8 +392,7 @@ class Server:
         return result
 
     def generate_certificate_verify(self, certificate):
-        public_key = certificate.public_key()
-        signature = bytes(certificate_verify.signature)
+        private_key = self.cert_private_key
 
         transcript_msgs = []
         for msg in self.all_cache:
@@ -375,7 +402,7 @@ class Server:
 
         signature_source = b"\x20" * 64 + b"TLS 1.3, server CertificateVerify" + b"\0" + content
 
-        self.signature_scheme.signature_algorithm.verify(public_key, signature, signature_source)
+        return [*self.signature_scheme.signature_algorithm.derive(private_key, signature_source)]
 
     def check_client_finished(self, finished):
         hasher = self.cipher_suite.hash_algorithm
@@ -487,9 +514,15 @@ class Server:
                         self.public_key["server"] = crypto.PublicKey.from_private(self.private_key["server"])
                         self.public_key["client"] = crypto.PublicKey(entry.key.value, crypto.X25519)
                         self.shared_key = self.private_key["server"].exchange(self.public_key["client"])
+            elif extension.type_id == 13:
+                if 0x0403 in [scheme.sig_id for scheme in extension.schemes]:
+                    self.signature_scheme = SignatureScheme(0x0403)
 
         if self.shared_key == None:
             raise RuntimeError("Could not get shared key")
+
+        if self.signature_scheme == None:
+            raise RuntimeError("No supported Signature Scheme")
 
         server_hello = TLSServerHelloFrame(
             TLSVersion("1.2"),
@@ -526,60 +559,49 @@ class Server:
             )
         )
 
-        recv_change_cipher_spec = False # for compatibility
-        while self.phase == 3:
-            encrypted_extensions = self.raw_recv()
-            if encrypted_extensions.child_id == 20 and recv_change_cipher_spec == False:
-                recv_change_cipher_spec = True
-                continue
-            if encrypted_extensions.child_id == 22 and encrypted_extensions.child.child_id == 8:
-                self.phase = 4
-                encrypted_extensions = encrypted_extensions.child.child
-            else:
-                raise RuntimeError("Illegal message!")
+        certificate_message = TLSCertificateFrame([], [CertificateEntry(cert, []) for cert in self.certificates])
 
-        certificate_message = self.raw_recv()
-        if certificate_message.child_id != 22 or certificate_message.child.child_id != 11:
-            raise RuntimeError("Illegal message!")
+        self.raw_send(
+            TLSRecordFrame(
+                TLSHandshakeFrame(
+                    certificate_message
+                )
+            )
+        )
 
-        certificate_message = certificate_message.child.child
+        certificate_verify = TLSCertificateVerifyFrame(
+            self.signature_scheme,
+            self.generate_certificate_verify(
+                self.certificates[0]
+            )
+        )
 
-        certs = []
-        for cert_entry in certificate_message.certificates:
-            certs.append(cert_entry.certificate)
-            #print(cert_entry.extensions)
-        #print(certs)
-
-        crypto.verify_certificates(certs[0], certs[1:])
-
-        certificate_verify = self.raw_recv()
-        if certificate_verify.child_id != 22 or certificate_verify.child.child_id != 15:
-            raise RuntimeError("Illegal message!")
-
-        certificate_verify = certificate_verify.child.child
-
-        self.signature_scheme = certificate_verify.signature_scheme
-
-        self.check_certificate_verify(certificate_verify, certs[0])
-
-        server_finished = self.raw_recv()
-
-        if server_finished.child_id != 22 or server_finished.child.child_id != 20:
-            raise RuntimeError("Illegal message!")
-
-        server_finished = server_finished.child.child
-
-        self.check_server_finished(server_finished)
+        self.raw_send(
+            TLSRecordFrame(
+                TLSHandshakeFrame(
+                    certificate_verify
+                )
+            )
+        )
 
         self.raw_send(
             TLSRecordFrame(
                 TLSHandshakeFrame(
                     TLSFinishedFrame(
-                        self.generate_client_finished_data()
+                        self.generate_server_finished_data()
                     )
                 )
             )
         )
+
+        client_finished = self.raw_recv()
+
+        if client_finished.child_id != 22 or client_finished.child.child_id != 20:
+            raise RuntimeError("Illegal message!")
+
+        client_finished = client_finished.child.child
+
+        self.check_client_finished(client_finished)
 
         self.generate_application_secrets()
         self.record_num["client"] = self.record_num["server"] = 0

@@ -476,7 +476,7 @@ class Client:
             ext.ClientHelloExtensions.SupportedVersions([TLSVersion("1.3")])
         ) # supported versions
         client_hello.extensions.append(
-            ext.ClientHelloExtensions.SignatureAlgorithms([SignatureScheme(0x0804)])
+            ext.ClientHelloExtensions.SignatureAlgorithms([SignatureScheme(0x0403), SignatureScheme(0x0404), SignatureScheme(0x0804)])
         ) # signature algorithms
         client_hello.extensions.append(
             ext.ClientHelloExtensions.SupportedGroups([NamedGroup(group_id) for group_id in self.key_pairs])
